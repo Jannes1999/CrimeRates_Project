@@ -1,0 +1,48 @@
+---
+title: "21641412_CrimeRates"
+author: "Jannes Eloff"
+date: '2023-06-19'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+suppressMessages({library(tidyverse)})
+suppressMessages({library(readxl)})
+
+Crime_Economics_data <- read_excel("Code/Data/Crime Economics - data.xlsx", skip = 1)
+```
+
+# Introduction 
+
+The dataset used is already clean thus no nead to deal with NA's or other irregularities of similar nature. 
+
+## Initial exploratory data analysis 
+
+```{r}
+source("Code/dens_plot.R")
+dens_plot(alpha = 0.7, binwidth = 4)
+```
+
+
+The density plot here represents
+
+```{r}
+install.packages("rsample")
+library(rsample)
+
+install.packages("vip")
+library(vip)
+
+set.seed(123)  # Set the seed for reproducibility
+split_1  <- initial_split(ames, prop = 0.7)  # Split the dataset 
+train_1  <- training(split_1)  # Training set
+test_1   <- testing(split_1)  # Test set
+
+```
+
+
+
+
+
+
