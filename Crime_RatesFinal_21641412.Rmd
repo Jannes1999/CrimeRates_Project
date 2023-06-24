@@ -3,46 +3,599 @@ title: "21641412_CrimeRates"
 author: "Jannes Eloff"
 date: '2023-06-19'
 output: pdf_document
+always_allow_html: true
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 suppressMessages({library(tidyverse)})
 suppressMessages({library(readxl)})
 
 Crime_Economics_data <- read_excel("Code/Data/Crime Economics - data.xlsx", skip = 1)
+
+Data1 <- as_tibble(Crime_Economics_data)
+
+Data1$`Per Capita Income` <-  gsub(",", " ", Data1$`Per Capita Income`)
+Data1$`Population Density (per sq. km)` <-  gsub(",", " ", Data1$`Population Density (per sq. km)`)
+Data1$`Per Capita Income` <-  gsub(" ", "", Data1$`Per Capita Income`)
+Data1$`Population Density (per sq. km)` <-  gsub(" ", "", Data1$`Population Density (per sq. km)`)
+sapply(Data1[,-1], as.numeric)
+
+Data1 <- sapply(Data1[,-1], as.numeric)
+Data1 <- as_tibble(Data1)
+
+Data1 <- Data1 %>% rename(Crime_Rate = `Crime Rate`)
+Data1 <- Data1 %>% rename(Unemployment_percentage = `Unemployment (%)`)
+Data1 <- Data1 %>% rename(Population_Density_per_sq_km = `Population Density (per sq. km)`)
+Data1 <- Data1 %>% rename(Weapons_per_100_persons = `Weapons per 100 persons`)
+Data1 <- Data1 %>% rename(Per_Capita_Income = `Per Capita Income`)
+Data1 <- Data1 %>% rename(Gini_Coefficient = `Gini Coefficient`)
+Data1 <- Data1 %>% rename(Literacy_Rate = `Literacy Rate`)
+Data1 <- Data1 %>% rename(Happiness_Index = `Happiness Index`)
+
 ```
 
 # Introduction 
+The aim of the following study is to predict the crime rates for countries based on economic related features. Models with good predictive power can give insight, for policymakers, into factors that causes higher crime rates which in turn leads to more effective solutions. 
 
-The dataset used is already clean thus no nead to deal with NA's or other irregularities of similar nature. 
+In order to draw the valid conclusions to find a model with the best predictive ability, several different models was optimally tuned and tested on test data in order to look at predictive accuracy. The following models are implemented with varying degrees of success: OLS rgeression, Lasso regression, ridge regression, decision trees, random forest and gradient boosting. 
+
+The code used for this project can be found on github using the following link: https://github.com/Jannes1999/CrimeRates_Project 
+This is where the code chunks and functions are stored. 
+
+# Data
+
+The dataset used looks at different countries and their respective crime rates. Of course there are a plethora of different factors that leads to the crime rate a country faces and including all the factors in a model is impossible. The dataset provides 8 features primarily focusing on economic factors that possibly effects crime rates. The following features are included in the dataset: Unemployment (%), HDI, Population density (per sq km), weapons per 100 persons, per capita income, Gini coefficient, literacy rate and happiness index. All of these variables are self-explanatory and need not any extra explanation.  
+
+The dataset is available on kaggle: https://www.kaggle.com/datasets/shubhrojyotidey/crime-economics. Not any other formation availble about the dataset (such as the author, how it was collected & when it was collected). Considering this is an analysis on the predictive power of different models the fact tat there is no real extra information available does not hinder the study. 
+
+The scope of the dataset suggests the models should be noisy, as there are not many predictors or data points to work with (which is a problem given that we are dealing with a complex target variable). 
 
 ## Initial exploratory data analysis 
 
-```{r}
-source("Code/dens_plot.R")
-dens_plot(alpha = 0.7, binwidth = 4)
+The dataset used is already clean thus no nead to deal with NA's or other irregularities of similar nature. This section mainly looks at the nature of the given target and features. This will aid in the understanding of the data. 
+
+
+```{r, echo=F, warning=FALSE}
+
+dens_plot <- function(alpha, binwidth){
+ 
+  y <- Data1 %>% ggplot()+
+    geom_histogram(aes(y= after_stat(density),x =Crime_Rate ), colour = "black", fill="#CDCDCD", binwidth = binwidth) +
+    geom_density(aes(x =Crime_Rate)) +
+    geom_vline(aes(xintercept=mean(Crime_Rate)),
+               color="blue", linetype="dashed", linewidth = 1) +
+    labs(title = "Crime rate density")
+    theme_bw()
+    
+  print(y)
+}
+
+
+Data_for_dens_log <- Data1
+Data_for_dens_log$Crime_Rate = log(Data_for_dens_log$Crime_Rate)
+
+dens_plot_log <- function(alpha, binwidth){
+
+x <- Data_for_dens_log %>% ggplot()+
+  geom_histogram(aes(y= after_stat(density),x = Crime_Rate ), colour = "black", fill="#CDCDCD") +
+  geom_density(aes(x = Crime_Rate)) +
+  geom_vline(aes(xintercept=mean(Crime_Rate)),
+             color="blue", linetype="dashed", linewidth = 1) +
+  labs(title = "log Crime rate density")
+
+print(x)
+}
+library(gridExtra)
+grid.arrange(dens_plot(alpha = 0.7, binwidth = 4),dens_plot_log(alpha = 0.7, binwidth = 4) , nrow = 1)
 ```
 
 
-The density plot here represents
+The density plot is approxiamating a somewhat normally distributed look. However for clarity we logged the target variable in o
+Altering the target with a log transformation will transform most right skewed distributions to be approximately normal (as seen in the figures above).
 
-```{r}
-install.packages("rsample")
+
+```{r,fig.height= 4, fig.width=6, echo=FALSE}
+
+suppressMessages({library(heatmaply)})
+Data1_corr <- cor(Data1[,-1])
+library(corrplot)
+palette = colorRampPalette(c("darkgreen", "white", "darkred")) (20)
+heatmap(x = Data1_corr, col = palette, symm = TRUE, main = "Heatmap")
+
+
+```
+
+
+There is clear positive correlation between HDI and the Happiness index and a strong negative correlation between HDI and the Gini coefficient. These correlations however are not severe enough (> 0.8 or < -0.8) to exclude one of the variables. It is clear as to why these correlations exist. The HDI typically factors in many different variables (which correlates positively with happiness). And similarly some of these factors used in calculation of HDI correlates negatively to the gini coefficient. 
+
+# Splitting of data 
+
+The dataset will be split in a training and test set for the analysis of the different model. A typical 70 / 30 split is performed (70 percent of the data falls into the training set with the remaining 30 percent allocated to the test set). 
+
+```{r, echo=FALSE}
 library(rsample)
-
-install.packages("vip")
-library(vip)
-
 set.seed(123)  # Set the seed for reproducibility
-split_1  <- initial_split(ames, prop = 0.7)  # Split the dataset 
-train_1  <- training(split_1)  # Training set
-test_1   <- testing(split_1)  # Test set
+split_1  <- initial_split(Data1, prop = 0.7)  # Split the dataset 
+train_2  <- training(split_1)  # Training set
+test_2   <- testing(split_1)  # Test set
+
+```
+
+
+# Multivariate regression
+
+To start of normal OLS regressions can be performed to see how they perform. Typically, they are easy to interpret and clear performance indicators make it easy to understand its validity. They do assume linearity which could potentially oversimplify the relationship between the features and target.
+
+```{r, echo=FALSE, warning=FALSE, out.width='20%'}
+model2 <- lm(Crime_Rate ~ . , data = train_2)
+
+library(knitr)
+suppressMessages({library(stargazer)})
+
+# Obtain the regression summary
+summary_table2 <- summary(model2)
+
+model3 <- lm(Crime_Rate ~ HDI + Gini_Coefficient, data = train_2 )
+
+summary_table3 <- summary(model3)
+
+model4 <- lm(log(Crime_Rate) ~ . , data = train_2)
+summary_table4 <- summary(model4)
+
+stargazer(model2,model3,model4, type = 'text')
+
+```
+
+In the above table we ran two different regressions. Firstly all the features was used as included in the model,  secondly only HDI and the Gini coefficient was added (those that are significant). While logging did not alter the nature of the target in a decisive manner, its worth including the models where Crime Rates (the target variable) was logged. Not one of the models exhibits an adjusted Rsquared of above 0.5 with the normal regressions marginally outperforming the logged ones. Furthermore, the models with only to features contains a lower Std. error than the models containing all the variables. 
+
+As mentioned earlier the assumption of linearity could be problematic and should be addressed if needed. To investigate some of the potential nonlinearities present we can plot each feature against the residuals. 
+
+```{r, echo=FALSE, warning=FALSE}
+##Plot the residual plot with all predictors.
+require(gridExtra)
+plot1 = ggplot(train_2, aes(Unemployment_percentage, residuals(model2))) + geom_point() + geom_smooth()
+plot2=ggplot(train_2, aes(HDI, residuals(model2))) + geom_point() + geom_smooth()
+plot3=ggplot(train_2, aes(Population_Density_per_sq_km, residuals(model2))) + geom_point() + geom_smooth()
+plot4=ggplot(train_2, aes(Weapons_per_100_persons, residuals(model2))) + geom_point() + geom_smooth()
+plot5=ggplot(train_2, aes(Per_Capita_Income, residuals(model2))) + geom_point() + geom_smooth()
+plot6=ggplot(train_2, aes(Gini_Coefficient, residuals(model2))) + geom_point() + geom_smooth()
+plot7=ggplot(train_2, aes(Literacy_Rate, residuals(model2))) + geom_point() + geom_smooth()
+plot8=ggplot(train_2, aes(Happiness_Index, residuals(model2))) + geom_point() + geom_smooth()
+suppressMessages({grid.arrange(plot1,plot2,plot3,plot4,plot5,plot6,plot7,plot8)})
+```
+
+Some non-linearities are present above in the following features: Population_Density_per_sq_km, Gini_Coefficient and the Literacy_Rate. Now lets include 
+
+```{r, echo=FALSE, warning=FALSE}
+model6 <- lm(Crime_Rate ~ Unemployment_percentage +HDI+ Population_Density_per_sq_km + Weapons_per_100_persons+ Per_Capita_Income + Gini_Coefficient+           Literacy_Rate  + Happiness_Index+ I( Population_Density_per_sq_km^2)+ I(Gini_Coefficient^2)+ I(Literacy_Rate^2) , data = train_2)
+summary_table6 <- summary(model6)
+
+
+model7 <- lm(log(Crime_Rate) ~ Unemployment_percentage +HDI+ Population_Density_per_sq_km + Weapons_per_100_persons+ Per_Capita_Income + Gini_Coefficient+           Literacy_Rate  + Happiness_Index+ I( Population_Density_per_sq_km^2)+ I(Gini_Coefficient^2)+ I(Literacy_Rate^2) , data = train_2)
+summary_table7 <- summary(model7)
+
+
+suppressMessages({stargazer(model6,model7, type = "text" ,title = "Crime rate lm models with nonlinearities")})
+
+```
+From the table above we can conclude that introducing nonlinearity into the models makes performance worse all around. From the previous models the Adjusted Rsquared is less and the Residual standard error is higher. We can conclude that the nonlinearities are not captured in the correct manner hence more sophisticated models that accurately capture the nonlinear relationship between features and target should be used for better accuracy.
+
+# Regularised Regression
+
+Since we are working with a relatively small dataset regularised regression might be useful to use. While the amount of features are not more than the available data points the lasso and ridge models could still provide valuable insights. Furthermore, for large data sets, the original sample of data may be partitioned into a training set on which to train the model, a validation set on which to validate our models and a test set to evaluate our trained model. However, when we do not have large samples of data, cross-validation is particularly useful. Lasso and Ridge regresions applies penalties to specific features based on their importance. With the lasso penalty some feature coefficients could shrink all the way to 0 whereas in the case of the ridge these coefficients does not shrink all the way to 0. 
+
+Starting with the Lasso regression we use the glmnet package which allows us to make use of cross validation ans specify alpha which tells glmnet which method to implement:
+alpha = 0: ridge penalty
+alpha = 1: lasso penalty (in this case)
+0 < alpha < 1: elastic net model
+
+Furthermore, glmnet does two things that one needs to be aware of.
+Standardises features
+Fits ridge models across wide range of 
+$\lambda$ values (automatically)
+
+
+
+```{r, echo=FALSE}
+
+# we use model.matrix(...)[, -1] to discard the intercept
+suppressMessages({library(vip)})
+library(caret)
+library(glmnet)
+X <- model.matrix(train_2$Crime_Rate ~ ., train_2)[, -1]
+Y <- (train_2$Crime_Rate)
+
+X_test <- model.matrix(test_2$Crime_Rate ~ ., test_2)[, -1]
+Y_test <- (test_2$Crime_Rate)
+
+ridge <- glmnet(
+  x = X,
+  y = Y,
+  alpha = 0
+)
+
+set.seed(123)
+
+
+Lasso <- glmnet(
+  x = X,
+  y = Y,
+  alpha = 1
+)
+
+cv_lasso <- cv.glmnet(x = X, y = Y, alpha = 1)
+best_lambda <- cv_lasso$lambda.min
+
+
+#find coefficients of best model
+best_model <- glmnet(x = X, y = Y, alpha = 1, lambda = best_lambda)
+
+
+cv_ridge <- cv.glmnet(x = X, y = Y, alpha = 0)
+best_lambda_r <- cv_ridge$lambda.min
+
+
+#find coefficients of best model
+best_model_r <- glmnet(x = X, y = Y, alpha = 0, lambda = best_lambda_r)
+
+
+plot(Lasso, xvar = "lambda")
+
+# Make predictions on the test set
+target_variable_column <- match("Crime_Rate", colnames(train_2))
+
+lm_predictions <- predict(model2, newdata = test_2)
+cv_predictions <- predict(cv_lasso, newx = as.matrix(test_2[, -target_variable_column]), s = "lambda.min")
+rr_prediction <-  predict(cv_ridge, newx = as.matrix(test_2[, -target_variable_column]), s = "lambda.min")
+
+plot(Lasso, xvar = "lambda")
+
+
+
+```
+Here is how the coefficienets behave in the lasso (similar in ridge, however the coefficients dissappear completely). 
+
+
+After the model was implemented lambda is one of the hyper parameters that can be tuned in order to produce better results. We can see that, initially, as our penalty (lambda) increases the MSE decreased which suggest that thee normal OLS approach possibly overfits the data. Similar analysis can be done in the ridge regression. 
+
+Here are the given feature selection done by both models:
+
+
+```{r, echo=FALSE}
+
+cv_glmnet <- train(
+  x = X,
+  y = Y,
+  method = "glmnet",
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+
+plot(cv_glmnet)
+vip(cv_glmnet, num_features = 20, geom = "point")
+```
+
+Regularized regression provides many great benefits over traditional GLMs when applied to large data sets with lots of features. It provides a great option for handling the  n >  p problem, helps minimize the impact of multicollinearity, and can perform automated feature selection. It also has relatively few hyperparameters which makes them easy to tune, computationally efficient compared to other algorithms discussed in later chapters, and memory efficient.
+
+
+
+```{r, echo=FALSE}
+set.seed(123)
+
+# grid search across 
+cv_glmnet <- train(
+  x = X,
+  y = Y,
+  method = "glmnet",
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+
+plot(cv_glmnet)
+```
+The figure above optimally select the CV model that produces the lowest RMSE
+
+Now once our hyperparameters are optimally tuned we can look at our results from our training and test sets in order to look at the predictive accuracy:
+
+
+```{r, echo=FALSE}
+
+eval_results <- function(true, predicted, df) {
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+
+  
+  # Model performance metrics
+data.frame(
+  RMSE = RMSE,
+  Rsquare = R_square
+)
+  
+}
+
+
+predictions_train_l <- predict(cv_lasso, s = best_lambda, newx = X)
+eval_results(Y, predictions_train_l, train_2)
+
+predictions_test_l <- predict(cv_lasso, s = best_lambda, newx = X_test)
+eval_results(Y_test, predictions_test_l, test_2)
+
+
+
+
+```
+
+For the lasso model The discrepency between the train and the test is substantial. The train set exhibit an RMSE of 10.85v whereas the test set has a RMSE of 12.21
+
+```{r, echo=FALSE}
+predictions_train_r <- predict(cv_ridge, s = best_lambda, newx = X)
+eval_results(Y, predictions_train_r, train_2)
+
+predictions_test_r <- predict(cv_ridge, s = best_lambda, newx = X_test)
+eval_results(Y_test, predictions_test_r, test_2)
+```
+
+For the Ridge regression the RMSE difference (between train and test) is similar to that of the lasso. The RMSE of the train data is 10.52 and the RMSE of the 
+test data is 12.27
+
+These results are comparable to the linear models displayed earlier, hence there are more sophisticated models needed. For further clarity on the variables these regularised models find important the following plot shows variable importance:
+
+
+```{r, echo=FALSE}
+library(vip)
+library(caret)
+library(glmnet)
+X <- model.matrix(train_2$Crime_Rate ~ ., train_2)[, -1]
+Y <- log((train_2$Crime_Rate))
+# grid search across 
+cv_glmnet <- train(
+  x = X,
+  y = Y,
+  method = "glmnet",
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+
+vip(cv_glmnet, num_features = 8, geom = "point")
+```
+
+This variable importance plot suggest that HDI and Gini coefficient are the only variables that are considered "important". 
+
+# Tree based methods
+
+### Decision trees
+The following section will be looking at tree based models (decision trees, random forrest, gradient boosting). 
+
+Tree-based models are a class of nonparametric algorithms that work by partitioning the feature space into a number of smaller (non-overlapping) regions with similar response values using a set of splitting rules. When looking at decision tree
+The objective at each node is to find the “best” feature (xi) to partition the remaining data into one of two regions (R1
+and R2) such that the overall error between the actual response (yi) and the predicted constant (ci) is minimized
+
+```{r, echo=FALSE}
+# Decision tree
+library(rsample)
+set.seed(123)  # Set the seed for reproducibility
+split_1  <- initial_split(Data1, prop = 0.7)  # Split the dataset 
+train_2  <- training(split_1)  # Training set
+test_2   <- testing(split_1)  # Test set
+
+library(caret)
+library(rpart)
+library(rpart.plot)
+
+Data1_tree <- rpart(
+  formula = Crime_Rate ~ .,
+  data    = train_2,
+  method  = "anova"
+)
+
+Data1_tree
+
+
+```
+
+
+```{r, echo=FALSE}
+rpart.plot(Data1_tree)
+```
+
+The First figure and table shows exactly how the decision tree was split and where. The first variable split, the variable that gave the largest reduction in SSE, was Per_Capita_Income. 
+
+```{r, echo=FALSE, warning=FALSE}
+plotcp(Data1_tree)
+```
+This plot illustrating the relative cross validation error (y-axis) for various cp values (lower x-axis). Smaller cp values lead to larger trees (upper x-axis). Using the 1-SE rule, a tree size of 3 provides optimal cross validation results.
+
+ 
+
+```{r, echo=FALSE, warning=FALSE}
+# caret cross validation results
+Data1_CV_tree <- train(
+  Crime_Rate~ .,
+  data = train_2,
+  method = "rpart",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 8
+)
+
+ggplot(Data1_CV_tree)
+
+```
+
+Cross-validated accuracy rate for the 20 different alphaparameter values in our grid search. Lower alpha values (deeper trees) help to minimize errors.
+
+  
+
+```{r, echo=FALSE}
+cv <- trainControl(
+  method = "repeatedcv", 
+  number = 10, 
+  repeats = 5
+)
+
+# Create grid of hyperparameter values
+hyper_grid <- expand.grid(k = seq(2, 35, by = 1))
+
+# Tune a knn model using grid search
+knn_fit <- train(
+  Crime_Rate ~ ., 
+  data = Data1, 
+  method = "knn", 
+  trControl = cv, 
+  tuneGrid = hyper_grid,
+  metric = "RMSE"
+)
+ggplot(knn_fit)
+
+
+
+
+```
+
+
+```{r, echo=FALSE}
+print(13.31566)
+```
+```{r, echo=FALSE}
+print(12.84662)
+```
+Above is the RMSE for the normal decision tree and the decision tree using 10-fold cross validation respectively. Given the size of the data set the cross validation helped to lower the RMSE from 13.31 to 12.84
+
+
+### Random forrest
+
+Bagging trees introduces a random component into the tree building process by building many trees on bootstrapped copies of the training data. Bagging then aggregates the predictions across all the trees; this aggregation reduces the variance of the overall procedure and results in improved predictive performance. However, as we saw in Section 10.6, simply bagging trees results in tree correlation that limits the effect of variance reduction.
+
+
+The model already have default settings regarding the hyperparameters which tend to be optimal, thus the following OOB (out of box) RMSE was reached
+
+```{r, echo=FALSE}
+n_features <- length(setdiff(names(train_2), "Crime_Rate"))
+library(ranger)
+# train a default random forest model
+data1_rf1 <- ranger(
+  Crime_Rate ~ ., 
+  data = train_2,
+  mtry = floor(n_features / 3),
+  respect.unordered.factors = "order",
+  seed = 123
+)
+
+# get OOB RMSE
+(default_rmse <- sqrt(data1_rf1$prediction.error))
 
 ```
 
 
 
+The main hyperparameters to consider include:
+
+The number of trees in the forest
+The number of features to consider at any given split:  
+m 
+t
+r
+y
+ 
+The complexity of each tree
+The sampling scheme
+The splitting rule to use during tree construction
+
+Random forests provide a very powerful out-of-the-box algorithm that often has great predictive accuracy. They come with all the benefits of decision trees (with the exception of surrogate splits) and bagging but greatly reduce instability and between-tree correlation.
+
+```{r, echo=FALSE}
+# re-run model with impurity-based variable importance
+rf_impurity <- ranger(
+  formula = Crime_Rate ~ ., 
+  data = train_2, 
+  num.trees = 330,
+  mtry = floor(n_features / 3),
+  min.node.size = 1,
+  sample.fraction = .80,
+  replace = FALSE,
+  importance = "impurity",
+  respect.unordered.factors = "order",
+  verbose = FALSE,
+  seed  = 123
+)
+
+# re-run model with permutation-based variable importance
+rf_permutation <- ranger(
+  formula = Crime_Rate ~ ., 
+  data = train_2, 
+  num.trees = 330,
+  mtry = floor(n_features / 3),
+  min.node.size = 1,
+  sample.fraction = .80,
+  replace = FALSE,
+  importance = "permutation",
+  respect.unordered.factors = "order",
+  verbose = FALSE,
+  seed  = 123
+)
+
+p1 <- vip::vip(rf_impurity, num_features = 8, geom = "point")
+p2 <- vip::vip(rf_permutation, num_features = 8, geom = "point")
+library(gridExtra)
+grid.arrange(p1,p2)
+```
+
+Permutation importance does not reflect to the intrinsic predictive value of a feature by itself but how important this feature is for a particular model.
+
+The resulting VIPs are displayed in Figure 11.5. Typically, you will not see the same variable importance order between the two options; however, you will often see similar variables at the top of the plots (and also the bottom). Consequently, in this example, we can comfortably state that there appears to be enough evidence to suggest that three variables stand out as most influential:
+(1) HDI
+(2) Per Capita Income
+(3) Literacy rate
+(4) Gini coefficient
+
+These variable importance plots differs drastically from variable importance plot from regularised regression. The variables Per_Capita_Income and Literacy_Rate are not important for the Lasso model however they are important in the random forrest model. This suggest a nonlinnear relationship that is not captured in regularised models. 
 
 
+### Gradient boosting
 
+Gradient boosting builds an ensemble of shallow trees with each tree learning and building on the previous one (as oppose to random forests, that builds an ensemble of deep independent trees). Boosting can be applied to any model however they are typically and most effectively applied to decision trees (due to being tailored for models exhibiting high bias and low variance). 
+
+Here is a snippet of some analysis that can be performed using xgboost, however this is only to showcase one particular ability of gradient bossting. 
+
+```{r, echo=FALSE}
+suppressMessages({library(gbm)})      # for original implementation of regular and stochastic GBMs
+suppressMessages({library(h2o)})     # for a java-based implementation of GBM variants
+suppressMessages({library(xgboost)})
+
+# run a basic GBM model
+set.seed(123)  # for reproducibility
+Data1_gbm1 <- gbm(
+  formula = Crime_Rate ~ .,
+  data = train_2,
+  distribution = "gaussian",  # SSE loss function
+  n.trees = 5000,
+  shrinkage = 0.1,
+  interaction.depth = 3,
+  n.minobsinnode = 10,
+  cv.folds = 10
+)
+
+# find index for number trees with minimum CV error
+best <- which.min(Data1_gbm1$cv.error)
+# get MSE and compute RMSE
+sqrt(Data1_gbm1$cv.error[best])
+## [1] 23240.38
+
+# plot error curve
+gbm.perf(Data1_gbm1, method = "cv")
+
+```
+
+Now given the package gbm we have already found the optimal number of trees which is 156 and the learning rate of 0.1 (usually the default). Thus, these optimal hyperparameters can now be used to predict crime rates. 
+
+
+# Results/Conclusion
+
+The difference in the importance of features in linear models compared to random forest could concievably be because of the linearity assumed by the linear models. The allowance for non linnearities gives deeper insight into the relationship between features and the target hence lower mse's are found in these more complex models. 
+
+That being said most models used exhibit RMSE between 10 and 13 without much improvement through processes such as Cross-Validation. This indicates that we are either dealing with a poor set of features (many of the models suggested that some features are obsolete), or other, more advanced, models should be incorporated such as nearul nets, gradient boosting, etc. 
